@@ -1,4 +1,4 @@
-// server.js — SkyMail с модерацией (совместим с клиентом)
+// server.js — SkyMail с модерацией и админ-панелью
 const express = require('express');
 const session = require('cookie-session');
 const bcrypt = require('bcrypt');
@@ -10,11 +10,13 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'SkyMonder';
 
 // -------------------- Конфигурация --------------------
 const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const EMAILS_FILE = path.join(DATA_DIR, 'emails.json');
+const BANNED_FILE = path.join(DATA_DIR, 'banned_ips.json');
 
 // Гарантируем наличие папки data
 fs.mkdir(DATA_DIR, { recursive: true }).catch(console.error);
@@ -81,7 +83,7 @@ function saveEmailToFolder(userEmail, email, folder) {
     folderData.push(email);
 }
 
-// Поиск письма по id в папках пользователя (возвращает { folder, index, item })
+// Поиск письма по id в папках пользователя
 function findEmailInUser(userEmail, emailId) {
     const userEmails = emails[userEmail];
     if (!userEmails) return null;
@@ -187,7 +189,6 @@ async function checkModerationAndBan(text, ip) {
 
 async function banIP(ip, reason) {
     const cleanIp = ip.split(',')[0].split(':')[0];
-    const BANNED_FILE = path.join(DATA_DIR, 'banned_ips.json');
     let banned = [];
     try {
         const data = await fs.readFile(BANNED_FILE, 'utf-8');
@@ -204,7 +205,6 @@ async function banIP(ip, reason) {
 
 async function isIPBanned(ip) {
     const cleanIp = ip.split(',')[0].split(':')[0];
-    const BANNED_FILE = path.join(DATA_DIR, 'banned_ips.json');
     try {
         const data = await fs.readFile(BANNED_FILE, 'utf-8');
         const banned = JSON.parse(data);
@@ -236,7 +236,8 @@ app.use(async (req, res, next) => {
                       req.path.startsWith('/email/') ||
                       req.path === '/me' ||
                       req.path === '/logout' ||
-                      req.path === '/search';
+                      req.path === '/search' ||
+                      req.path.startsWith('/admin/');
         if (isApi) {
             return res.status(403).json({ error: 'Banned', message: banned.reason || 'Ваш IP заблокирован' });
         }
@@ -245,7 +246,7 @@ app.use(async (req, res, next) => {
     next();
 });
 
-// -------------------- Сессии (как в оригинале) --------------------
+// -------------------- Сессии --------------------
 app.use(express.json());
 app.use(express.static(__dirname));
 
@@ -260,6 +261,13 @@ app.use(session({
 function requireAuth(req, res, next) {
     if (!req.session.user) {
         return res.status(401).json({ error: 'Не авторизован' });
+    }
+    next();
+}
+
+function isAdmin(req, res, next) {
+    if (!req.session.user || req.session.user !== ADMIN_LOGIN) {
+        return res.status(403).json({ error: 'Доступ запрещён' });
     }
     next();
 }
@@ -285,7 +293,6 @@ app.post('/register', async (req, res) => {
     if (modResult.banned) {
         return res.status(403).json({ error: `Доступ запрещён: ${modResult.reason}` });
     }
-    // Можно также проверить пароль, но для простоты пропустим
 
     const hash = await bcrypt.hash(password, 10);
     users.push({ username, passwordHash: hash });
@@ -468,7 +475,7 @@ app.put('/email/:id/read', requireAuth, async (req, res) => {
     res.json({ message: 'Письмо отмечено как прочитанное' });
 });
 
-// Переместить письмо в другую папку (включая корзину и восстановление)
+// Переместить письмо в другую папку
 app.put('/email/:id/move', requireAuth, async (req, res) => {
     const { targetFolder } = req.body;
     if (!['trash', 'inbox', 'sent', 'drafts'].includes(targetFolder)) {
@@ -484,10 +491,8 @@ app.put('/email/:id/move', requireAuth, async (req, res) => {
     if (currentFolder === targetFolder) {
         return res.json({ message: 'Письмо уже в этой папке' });
     }
-    // Удаляем из текущей папки
     const currentList = getUserFolder(userEmail, currentFolder);
     currentList.splice(index, 1);
-    // Добавляем в целевую
     if (targetFolder === 'trash') {
         item.originalFolder = currentFolder;
     } else {
@@ -538,7 +543,63 @@ app.get('/search', requireAuth, async (req, res) => {
     res.json(results);
 });
 
-// Health check
+// -------------------- Админ-панель --------------------
+
+// Список всех пользователей
+app.get('/admin/users', isAdmin, async (req, res) => {
+    const userList = users.map(u => ({ username: u.username }));
+    res.json(userList);
+});
+
+// Статистика
+app.get('/admin/stats', isAdmin, async (req, res) => {
+    let banned = [];
+    try {
+        const data = await fs.readFile(BANNED_FILE, 'utf-8');
+        banned = JSON.parse(data);
+    } catch (e) {
+        banned = [];
+    }
+    res.json({
+        users: users.length,
+        banned: banned.length,
+    });
+});
+
+// Список нарушений (забаненные IP)
+app.get('/admin/violations', isAdmin, async (req, res) => {
+    let banned = [];
+    try {
+        const data = await fs.readFile(BANNED_FILE, 'utf-8');
+        banned = JSON.parse(data);
+    } catch (e) {
+        banned = [];
+    }
+    res.json(banned);
+});
+
+// Разбан IP
+app.post('/admin/unban', isAdmin, async (req, res) => {
+    const { ip } = req.body;
+    if (!ip) {
+        return res.status(400).json({ error: 'IP обязателен' });
+    }
+    let banned = [];
+    try {
+        const data = await fs.readFile(BANNED_FILE, 'utf-8');
+        banned = JSON.parse(data);
+    } catch (e) {
+        banned = [];
+    }
+    const filtered = banned.filter(b => b.ip !== ip);
+    if (filtered.length === banned.length) {
+        return res.status(404).json({ error: 'IP не найден в списке банов' });
+    }
+    await fs.writeFile(BANNED_FILE, JSON.stringify(filtered, null, 2));
+    res.json({ ok: true, message: `IP ${ip} разбанен` });
+});
+
+// -------------------- Health check --------------------
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -548,5 +609,6 @@ app.get('/heal', (req, res) => {
 
 // -------------------- Запуск сервера --------------------
 app.listen(PORT, () => {
-    console.log(`✈️ SkyMail с модерацией запущен на http://localhost:${PORT}`);
+    console.log(`✈️ SkyMail с модерацией и админ-панелью запущен на http://localhost:${PORT}`);
+    console.log(`👑 Администратор: ${ADMIN_LOGIN}`);
 });
