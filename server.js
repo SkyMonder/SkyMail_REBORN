@@ -416,7 +416,15 @@ app.get('/search', requireAuth, async (req, res) => {
 app.get('/me', requireAuth, (req, res) => {
     res.json({ username: req.session.user });
 });
+// Health check endpoints (для Render и других хостингов)
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
+// Если вы хотели именно /heal – добавьте и его, например, как алиас:
+app.get('/heal', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 // -------------------- Запуск сервера --------------------
 app.listen(PORT, () => {
     console.log(`SkyMail сервер запущен на http://localhost:${PORT}`);
