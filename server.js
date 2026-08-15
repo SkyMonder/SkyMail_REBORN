@@ -412,6 +412,11 @@ app.get('/search', requireAuth, async (req, res) => {
     res.json(results);
 });
 
+// Получить информацию о текущем пользователе
+app.get('/me', requireAuth, (req, res) => {
+    res.json({ username: req.session.user });
+});
+
 // -------------------- Запуск сервера --------------------
 app.listen(PORT, () => {
     console.log(`SkyMail сервер запущен на http://localhost:${PORT}`);
