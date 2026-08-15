@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SkyMail — почтовый сервис</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <!-- Bootstrap Icons (опционально) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
+    <style>
+        /* Дополнительные стили */
+        body {
+            background: #f4f7fa;
+        }
+        .email-list-item {
+            cursor: pointer;
+            border-bottom: 1px solid #e9ecef;
+            transition: background 0.15s;
+        }
+        .email-list-item:hover {
+            background: #f1f3f5;
+        }
+        .email-list-item .subject {
+            font-weight: 500;
+        }
+        .email-list-item .from, .email-list-item .to {
+            color: #495057;
+        }
+        .email-list-item .date {
+            color: #6c757d;
+            font-size: 0.9rem;
+        }
+        .email-list-item.unread .subject {
+            font-weight: 700;
+        }
+        .email-list-item.unread .from {
+            font-weight: 600;
+        }
+        .sidebar {
+            background: white;
+            border-right: 1px solid #dee2e6;
+            min-height: 100vh;
+        }
+        .sidebar .nav-link {
+            color: #333;
+            border-radius: 0;
+        }
+        .sidebar .nav-link.active {
+            background: #e9ecef;
+            font-weight: 600;
+        }
+        .sidebar .nav-link i {
+            margin-right: 10px;
+        }
+        .folder-badge {
+            float: right;
+            background: #e9ecef;
+            padding: 0 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+        }
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1050;
+        }
+        .email-body {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <!-- Контейнер для тостов -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Вход/регистрация (изначально видим) -->
+    <div id="authContainer" class="container mt-5" style="max-width: 420px;">
+        <div class="card shadow">
+            <div class="card-body">
+                <h3 class="card-title text-center mb-4">✈️ SkyMail</h3>
+                <ul class="nav nav-tabs nav-fill" id="authTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="loginTab" data-bs-toggle="tab" data-bs-target="#loginPanel" type="button" role="tab">Вход</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="registerTab" data-bs-toggle="tab" data-bs-target="#registerPanel" type="button" role="tab">Регистрация</button>
+                    </li>
+                </ul>
+                <div class="tab-content mt-3">
+                    <div class="tab-pane fade show active" id="loginPanel" role="tabpanel">
+                        <form id="loginForm">
+                            <div class="mb-3">
+                                <label for="loginUsername" class="form-label">Имя пользователя</label>
+                                <input type="text" class="form-control" id="loginUsername" required />
+                            </div>
+                            <div class="mb-3">
+                                <label for="loginPassword" class="form-label">Пароль</label>
+                                <input type="password" class="form-control" id="loginPassword" required />
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Войти</button>
+                        </form>
+                    </div>
+                    <div class="tab-pane fade" id="registerPanel" role="tabpanel">
+                        <form id="registerForm">
+                            <div class="mb-3">
+                                <label for="registerUsername" class="form-label">Имя пользователя</label>
+                                <input type="text" class="form-control" id="registerUsername" required pattern="[A-Za-z0-9_]+" />
+                                <small class="text-muted">Только латиница, цифры и подчёркивание. Ваш адрес: имя@skymail.ru</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="registerPassword" class="form-label">Пароль</label>
+                                <input type="password" class="form-control" id="registerPassword" required />
+                            </div>
+                            <button type="submit" class="btn btn-success w-100">Зарегистрироваться</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Основное приложение (скрыто до входа) -->
+    <div id="appContainer" style="display:none;">
+        <div class="container-fluid">
+            <div class="row">
+                <!-- Боковая панель -->
+                <nav class="col-md-3 col-lg-2 d-md-block sidebar p-0">
+                    <div class="position-sticky pt-3">
+                        <div class="px-3 mb-3">
+                            <h5>✈️ SkyMail</h5>
+                            <span class="text-muted" id="userDisplay"></span>
+                        </div>
+                        <ul class="nav flex-column">
+                            <li class="nav-item">
+                                <a href="#" class="nav-link active" data-folder="inbox">
+                                    <i class="bi bi-inbox"></i> Входящие
+                                    <span class="folder-badge" id="inboxCount">0</span>
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-folder="sent">
+                                    <i class="bi bi-send"></i> Отправленные
+                                    <span class="folder-badge" id="sentCount">0</span>
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-folder="drafts">
+                                    <i class="bi bi-pencil"></i> Черновики
+                                    <span class="folder-badge" id="draftsCount">0</span>
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-folder="trash">
+                                    <i class="bi bi-trash"></i> Корзина
+                                    <span class="folder-badge" id="trashCount">0</span>
+                                </a>
+                            </li>
+                            <li class="nav-item mt-4">
+                                <a href="#" class="nav-link" id="composeBtn">
+                                    <i class="bi bi-pencil-square"></i> Написать
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" id="logoutBtn">
+                                    <i class="bi bi-box-arrow-right"></i> Выйти
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+                </nav>
+
+                <!-- Основной контент -->
+                <main class="col-md-9 col-lg-10 px-md-4 py-3">
+                    <!-- Поиск -->
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <input type="text" id="searchInput" class="form-control" placeholder="Поиск по теме или тексту..." />
+                        </div>
+                        <div class="col-md-2">
+                            <button id="searchBtn" class="btn btn-outline-secondary w-100">Найти</button>
+                        </div>
+                    </div>
+
+                    <!-- Список писем -->
+                    <div id="emailListContainer">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h5 id="folderTitle">Входящие</h5>
+                            <span id="emailCount" class="text-muted">0 писем</span>
+                        </div>
+                        <div id="emailList" class="list-group">
+                            <!-- Письма будут загружены сюда -->
+                            <div class="text-center text-muted py-4">Нет писем</div>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для просмотра письма -->
+    <div class="modal fade" id="emailModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="emailModalTitle">Письмо</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-2"><strong>От:</strong> <span id="modalFrom"></span></div>
+                    <div class="mb-2"><strong>Кому:</strong> <span id="modalTo"></span></div>
+                    <div class="mb-2"><strong>Тема:</strong> <span id="modalSubject"></span></div>
+                    <div class="mb-2"><strong>Дата:</strong> <span id="modalDate"></span></div>
+                    <hr />
+                    <div id="modalBody" class="email-body"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                    <button type="button" class="btn btn-danger" id="modalDeleteBtn">Удалить</button>
+                    <button type="button" class="btn btn-warning" id="modalRestoreBtn" style="display:none;">Восстановить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для написания / редактирования письма -->
+    <div class="modal fade" id="composeModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="composeModalTitle">Новое письмо</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="composeForm">
+                        <input type="hidden" id="composeDraftId" value="" />
+                        <div class="mb-3">
+                            <label for="composeTo" class="form-label">Кому</label>
+                            <input type="email" class="form-control" id="composeTo" required placeholder="example@domain.com" />
+                        </div>
+                        <div class="mb-3">
+                            <label for="composeSubject" class="form-label">Тема</label>
+                            <input type="text" class="form-control" id="composeSubject" required />
+                        </div>
+                        <div class="mb-3">
+                            <label for="composeBody" class="form-label">Текст</label>
+                            <textarea class="form-control" id="composeBody" rows="6" required></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="button" class="btn btn-secondary" id="saveDraftBtn">Сохранить в черновики</button>
+                    <button type="button" class="btn btn-primary" id="sendEmailBtn">Отправить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Подключаем Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // ------------------------- Клиентский JavaScript -------------------------
+        (function() {
+            'use strict';
+
+            // Элементы DOM
+            const authContainer = document.getElementById('authContainer');
+            const appContainer = document.getElementById('appContainer');
+            const userDisplay = document.getElementById('userDisplay');
+            const emailList = document.getElementById('emailList');
+            const folderTitle = document.getElementById('folderTitle');
+            const emailCount = document.getElementById('emailCount');
+            const searchInput = document.getElementById('searchInput');
+            const searchBtn = document.getElementById('searchBtn');
+
+            // Модальные окна (Bootstrap)
+            const emailModal = new bootstrap.Modal(document.getElementById('emailModal'));
+            const composeModal = new bootstrap.Modal(document.getElementById('composeModal'));
+
+            // Текущее состояние
+            let currentFolder = 'inbox';
+            let currentEmails = []; // массив писем, отображаемых в списке
+            let selectedEmailId = null; // для действий в модалке
+
+            // DOM элементы модалки письма
+            const modalFrom = document.getElementById('modalFrom');
+            const modalTo = document.getElementById('modalTo');
+            const modalSubject = document.getElementById('modalSubject');
+            const modalDate = document.getElementById('modalDate');
+            const modalBody = document.getElementById('modalBody');
+            const modalDeleteBtn = document.getElementById('modalDeleteBtn');
+            const modalRestoreBtn = document.getElementById('modalRestoreBtn');
+
+            // Форма композиции
+            const composeForm = document.getElementById('composeForm');
+            const composeDraftId = document.getElementById('composeDraftId');
+            const composeTo = document.getElementById('composeTo');
+            const composeSubject = document.getElementById('composeSubject');
+            const composeBody = document.getElementById('composeBody');
+            const sendEmailBtn = document.getElementById('sendEmailBtn');
+            const saveDraftBtn = document.getElementById('saveDraftBtn');
+
+            // -------------------- Вспомогательные функции --------------------
+            function showToast(message, type = 'success') {
+                const container = document.getElementById('toastContainer');
+                const toast = document.createElement('div');
+                toast.className = `toast align-items-center text-white bg-${type} border-0`;
+                toast.role = 'alert';
+                toast.innerHTML = `
+                    <div class="d-flex">
+                        <div class="toast-body">${message}</div>
+                        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                    </div>
+                `;
+                container.appendChild(toast);
+                const bsToast = new bootstrap.Toast(toast, { delay: 3000 });
+                bsToast.show();
+                toast.addEventListener('hidden.bs.toast', () => toast.remove());
+            }
+
+            async function apiRequest(url, options = {}) {
+                const defaults = {
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include', // для сессионных кук
+                };
+                const merged = { ...defaults, ...options };
+                if (options.body && typeof options.body === 'object') {
+                    merged.body = JSON.stringify(options.body);
+                }
+                const response = await fetch(url, merged);
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.error || `Ошибка ${response.status}`);
+                }
+                return response.json();
+            }
+
+            // Обновить счетчики папок
+            function updateCounts() {
+                // Можно сделать запросы для каждой папки, но для простоты обновляем после загрузки списка
+                // Лучше делать при каждом обновлении списка, но мы обновим отдельно
+                const folders = ['inbox', 'sent', 'drafts', 'trash'];
+                folders.forEach(folder => {
+                    apiRequest(`/emails/${folder}`)
+                        .then(data => {
+                            const count = data.length;
+                            document.getElementById(`${folder}Count`).textContent = count;
+                        })
+                        .catch(() => {});
+                });
+            }
+
+            // Загрузить письма для текущей папки
+            function loadEmails(folder = currentFolder, searchQuery = '') {
+                currentFolder = folder;
+                let url = `/emails/${folder}`;
+                if (searchQuery) {
+                    url = `/search?q=${encodeURIComponent(searchQuery)}`;
+                }
+                apiRequest(url)
+                    .then(data => {
+                        currentEmails = data;
+                        renderEmailList(data, folder);
+                        updateCounts();
+                        // Обновить заголовок
+                        const folderNames = {
+                            inbox: 'Входящие',
+                            sent: 'Отправленные',
+                            drafts: 'Черновики',
+                            trash: 'Корзина'
+                        };
+                        folderTitle.textContent = searchQuery ? `Результаты поиска: "${searchQuery}"` : folderNames[folder] || folder;
+                        emailCount.textContent = `${data.length} писем`;
+                    })
+                    .catch(err => {
+                        showToast(err.message, 'danger');
+                    });
+            }
+
+            // Отрисовка списка писем
+            function renderEmailList(emails, folder) {
+                if (!emails.length) {
+                    emailList.innerHTML = `<div class="text-center text-muted py-4">Нет писем</div>`;
+                    return;
+                }
+                let html = '';
+                emails.forEach(email => {
+                    const isUnread = folder === 'inbox' && !email.read;
+                    const fromTo = folder === 'inbox' ? email.from : folder === 'sent' ? email.to : email.from;
+                    const label = folder === 'inbox' ? 'От' : folder === 'sent' ? 'Кому' : 'От';
+                    html += `
+                        <div class="list-group-item email-list-item ${isUnread ? 'unread' : ''}" data-id="${email.id}">
+                            <div class="d-flex w-100 justify-content-between align-items-center">
+                                <div class="d-flex flex-column flex-grow-1 me-2">
+                                    <span class="from"><strong>${label}:</strong> ${escapeHtml(fromTo)}</span>
+                                    <span class="subject">${escapeHtml(email.subject)}</span>
+                                </div>
+                                <div class="text-end">
+                                    <span class="date">${formatDate(email.date)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                emailList.innerHTML = html;
+
+                // Добавить обработчики клика по письму
+                document.querySelectorAll('.email-list-item').forEach(item => {
+                    item.addEventListener('click', function(e) {
+                        const id = this.dataset.id;
+                        openEmail(id);
+                    });
+                });
+            }
+
+            // Экранирование HTML
+            function escapeHtml(text) {
+                if (!text) return '';
+                const map = {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#039;'
+                };
+                return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+            }
+
+            // Форматирование даты
+            function formatDate(dateStr) {
+                const date = new Date(dateStr);
+                return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            }
+
+            // Открыть письмо
+            function openEmail(id) {
+                // Найдем письмо в currentEmails
+                const email = currentEmails.find(e => e.id === id);
+                if (!email) {
+                    showToast('Письмо не найдено', 'danger');
+                    return;
+                }
+                selectedEmailId = id;
+                // Заполняем модалку
+                modalFrom.textContent = email.from || '';
+                modalTo.textContent = email.to || '';
+                modalSubject.textContent = email.subject || '';
+                modalDate.textContent = formatDate(email.date);
+                modalBody.textContent = email.body || '';
+
+                // Кнопки: показываем/скрываем в зависимости от папки
+                const folder = email.folder || currentFolder; // fallback
+                if (folder === 'trash') {
+                    modalDeleteBtn.textContent = 'Удалить навсегда';
+                    modalRestoreBtn.style.display = 'inline-block';
+                } else {
+                    modalDeleteBtn.textContent = 'Удалить (в корзину)';
+                    modalRestoreBtn.style.display = 'none';
+                }
+                // Если это входящие и не прочитано, помечаем как прочитанное
+                if (folder === 'inbox' && !email.read) {
+                    apiRequest(`/email/${id}/read`, { method: 'PUT' })
+                        .then(() => {
+                            email.read = true;
+                            // Обновить отображение
+                            loadEmails(currentFolder);
+                            showToast('Письмо отмечено как прочитанное');
+                        })
+                        .catch(err => showToast(err.message, 'danger'));
+                }
+
+                emailModal.show();
+            }
+
+            // -------------------- Обработчики событий --------------------
+
+            // Вход
+            document.getElementById('loginForm').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                const username = document.getElementById('loginUsername').value.trim();
+                const password = document.getElementById('loginPassword').value;
+                try {
+                    const data = await apiRequest('/login', { method: 'POST', body: { username, password } });
+                    showToast(`Добро пожаловать, ${data.username}!`);
+                    authContainer.style.display = 'none';
+                    appContainer.style.display = 'block';
+                    userDisplay.textContent = data.username;
+                    loadEmails('inbox');
+                } catch (err) {
+                    showToast(err.message, 'danger');
+                }
+            });
+
+            // Регистрация
+            document.getElementById('registerForm').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                const username = document.getElementById('registerUsername').value.trim();
+                const password = document.getElementById('registerPassword').value;
+                try {
+                    await apiRequest('/register', { method: 'POST', body: { username, password } });
+                    showToast('Регистрация успешна! Теперь войдите.');
+                    // Переключить на вкладку входа
+                    document.getElementById('loginTab').click();
+                    document.getElementById('loginUsername').value = username;
+                    document.getElementById('loginPassword').value = '';
+                } catch (err) {
+                    showToast(err.message, 'danger');
+                }
+            });
+
+            // Навигация по папкам (боковое меню)
+            document.querySelectorAll('.sidebar .nav-link[data-folder]').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    document.querySelectorAll('.sidebar .nav-link').forEach(l => l.classList.remove('active'));
+                    this.classList.add('active');
+                    const folder = this.dataset.folder;
+                    loadEmails(folder);
+                    // Очищаем поиск
+                    searchInput.value = '';
+                });
+            });
+
+            // Кнопка "Написать"
+            document.getElementById('composeBtn').addEventListener('click', function(e) {
+                e.preventDefault();
+                // Сброс формы
+                composeForm.reset();
+                composeDraftId.value = '';
+                document.getElementById('composeModalTitle').textContent = 'Новое письмо';
+                composeModal.show();
+            });
+
+            // Отправить письмо
+            sendEmailBtn.addEventListener('click', async function() {
+                const to = composeTo.value.trim();
+                const subject = composeSubject.value.trim();
+                const body = composeBody.value.trim();
+                if (!to || !subject || !body) {
+                    showToast('Заполните все поля', 'warning');
+                    return;
+                }
+                try {
+                    await apiRequest('/email/send', { method: 'POST', body: { to, subject, body } });
+                    showToast('Письмо отправлено!');
+                    composeModal.hide();
+                    loadEmails(currentFolder);
+                } catch (err) {
+                    showToast(err.message, 'danger');
+                }
+            });
+
+            // Сохранить черновик
+            saveDraftBtn.addEventListener('click', async function() {
+                const to = composeTo.value.trim();
+                const subject = composeSubject.value.trim();
+                const body = composeBody.value.trim();
+                if (!to || !subject || !body) {
+                    showToast('Заполните все поля', 'warning');
+                    return;
+                }
+                const draftId = composeDraftId.value || undefined;
+                try {
+                    await apiRequest('/email/save-draft', { method: 'POST', body: { id: draftId, to, subject, body } });
+                    showToast('Черновик сохранён');
+                    composeModal.hide();
+                    loadEmails(currentFolder);
+                } catch (err) {
+                    showToast(err.message, 'danger');
+                }
+            });
+
+            // Модалка: удаление (перемещение в корзину или окончательное)
+            modalDeleteBtn.addEventListener('click', async function() {
+                if (!selectedEmailId) return;
+                const isTrash = modalDeleteBtn.textContent.includes('навсегда');
+                try {
+                    if (isTrash) {
+                        // Окончательное удаление
+                        await apiRequest(`/email/${selectedEmailId}`, { method: 'DELETE' });
+                        showToast('Письмо окончательно удалено');
+                    } else {
+                        // Перемещение в корзину
+                        await apiRequest(`/email/${selectedEmailId}/move`, { method: 'PUT', body: { targetFolder: 'trash' } });
+                        showToast('Письмо перемещено в корзину');
+                    }
+                    emailModal.hide();
+                    loadEmails(currentFolder);
+                } catch (err) {
+                    showToast(err.message, 'danger');
+                }
+            });
+
+            // Восстановление из корзины
+            modalRestoreBtn.addEventListener('click', async function() {
+                if (!selectedEmailId) return;
+                try {
+                    // По умолчанию восстанавливаем в папку inbox (можно улучшить)
+                    await apiRequest(`/email/${selectedEmailId}/move`, { method: 'PUT', body: { targetFolder: 'inbox' } });
+                    showToast('Письмо восстановлено из корзины');
+                    emailModal.hide();
+                    loadEmails(currentFolder);
+                } catch (err) {
+                    showToast(err.message, 'danger');
+                }
+            });
+
+            // Выход
+            document.getElementById('logoutBtn').addEventListener('click', async function(e) {
+                e.preventDefault();
+                try {
+                    await apiRequest('/logout');
+                    showToast('Вы вышли');
+                    appContainer.style.display = 'none';
+                    authContainer.style.display = 'block';
+                    // Очищаем поля
+                    document.getElementById('loginPassword').value = '';
+                } catch (err) {
+                    showToast(err.message, 'danger');
+                }
+            });
+
+            // Поиск
+            searchBtn.addEventListener('click', function() {
+                const query = searchInput.value.trim();
+                if (!query) {
+                    loadEmails(currentFolder);
+                    return;
+                }
+                loadEmails(currentFolder, query);
+            });
+
+            searchInput.addEventListener('keyup', function(e) {
+                if (e.key === 'Enter') {
+                    searchBtn.click();
+                }
+            });
+
+            // При открытии модалки композиции для черновика: заполнить форму
+            // Это можно сделать через отдельную функцию, вызываемую из списка черновиков.
+            // Для удобства добавим возможность двойного клика по черновику в списке.
+            // Но мы уже открываем письмо через обычный клик, поэтому в модалке письма можно добавить кнопку "Редактировать".
+            // Упростим: при клике на черновик в модалке добавим кнопку "Редактировать".
+            // Но для полноты реализуем: при открытии письма в папке "Черновики" показываем кнопку "Редактировать".
+            // Модифицируем openEmail: добавим кнопку редактирования в футер модалки.
+            // Для этого изменим модалку: добавим кнопку с id="modalEditBtn".
+            // Но чтобы не переписывать HTML, добавим её динамически или через hidden.
+
+            // Доработка: добавим кнопку редактирования в модалку письма, если папка drafts.
+            // Добавим в футер модалки:
+            // <button type="button" class="btn btn-primary" id="modalEditBtn" style="display:none;">Редактировать</button>
+            // Но мы не хотим менять HTML, поэтому сделаем через JS добавление.
+
+            // Вставим кнопку после modalRestoreBtn
+            const modalFooter = document.querySelector('#emailModal .modal-footer');
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'btn btn-primary';
+            editBtn.id = 'modalEditBtn';
+            editBtn.textContent = 'Редактировать';
+            editBtn.style.display = 'none';
+            modalFooter.appendChild(editBtn);
+
+            // Обновим openEmail для отображения editBtn
+            const originalOpen = openEmail;
+            openEmail = function(id) {
+                // Вызовем оригинальную функцию, но потом добавим логику
+                originalOpen(id);
+                // После отображения модалки проверим папку
+                const email = currentEmails.find(e => e.id === id);
+                if (email && (email.folder === 'drafts' || currentFolder === 'drafts')) {
+                    editBtn.style.display = 'inline-block';
+                } else {
+                    editBtn.style.display = 'none';
+                }
+            };
+
+            // Обработчик редактирования
+            editBtn.addEventListener('click', function() {
+                if (!selectedEmailId) return;
+                const email = currentEmails.find(e => e.id === selectedEmailId);
+                if (!email) return;
+                // Заполняем форму композиции
+                composeDraftId.value = email.id;
+                composeTo.value = email.to || '';
+                composeSubject.value = email.subject || '';
+                composeBody.value = email.body || '';
+                document.getElementById('composeModalTitle').textContent = 'Редактировать черновик';
+                emailModal.hide();
+                composeModal.show();
+            });
+
+            // Загрузка начальной страницы: проверяем, авторизован ли пользователь
+            // При загрузке страницы пытаемся получить список писем, чтобы проверить сессию.
+            // Просто делаем запрос к /emails/inbox, если ошибка 401 - показываем авторизацию.
+            // Но лучше при загрузке спросить у сервера статус сессии. Добавим эндпоинт /me.
+            // Для простоты, при первом запуске попробуем загрузить входящие.
+            // Если не авторизованы, сервер вернёт 401.
+            // Мы перехватим ошибку и покажем authContainer.
+            async function checkAuth() {
+                try {
+                    await apiRequest('/emails/inbox');
+                    // Если успешно, значит сессия есть
+                    authContainer.style.display = 'none';
+                    appContainer.style.display = 'block';
+                    // Получить имя пользователя из сессии? Можно добавить /me, но мы просто попросим логин заново.
+                    // Или можем сохранить при логине в localStorage.
+                    // В сессии у нас username, но клиент не знает. Добавим эндпоинт /me.
+                    const me = await apiRequest('/me');
+                    userDisplay.textContent = me.username;
+                    loadEmails('inbox');
+                } catch (err) {
+                    // Не авторизованы
+                    authContainer.style.display = 'block';
+                    appContainer.style.display = 'none';
+                }
+            }
+
+            // Добавим эндпоинт /me на сервере (дополним server.js)
+            // Но мы не можем изменить server.js здесь. Добавим его вручную в server.js перед запуском?
+            // Мы можем добавить его в код сервера. В server.js добавим:
+            // app.get('/me', requireAuth, (req, res) => res.json({ username: req.session.user }));
+            // Это нужно добавить в server.js. Поскольку я не могу изменить уже написанный server.js, я добавлю его в тексте ответа.
+
+            // Запускаем проверку при загрузке
+            checkAuth();
+
+            // Обработчик для кнопки "Восстановить" — мы его уже добавили.
+
+            // Дополнительно: при открытии композиции из черновика, мы используем editBtn.
+            // Также при сохранении черновика после редактирования, форма остаётся.
+
+            // Обновим функцию renderEmailList, чтобы при клике на письмо в черновиках открывалось с возможностью редактирования.
+            // Это уже обработано в openEmail.
+
+            // ------------------------------------------------
+            // Добавим поддержку пагинации (опционально) - для простоты пропустим, но можно добавить позже.
+
+            console.log('SkyMail клиент загружен');
+        })();
+    </script>
+</body>
+</html>
