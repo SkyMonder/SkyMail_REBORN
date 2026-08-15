@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Доступ запрещён</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background: #0a0f1e;
+      color: #e0e8ff;
+      font-family: 'Segoe UI', sans-serif;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      padding: 2rem;
+    }
+    .container {
+      max-width: 600px;
+      background: #1a233a;
+      border: 2px solid #c44;
+      border-radius: 20px;
+      padding: 2rem;
+      text-align: center;
+      box-shadow: 0 0 80px rgba(200,50,50,0.25);
+    }
+    .icon { font-size: 4rem; margin-bottom: 1rem; }
+    h1 { color: #f44; margin-bottom: 0.5rem; font-weight: 300; }
+    .msg-box {
+      background: #0d1225;
+      padding: 1rem;
+      border-radius: 10px;
+      margin: 1.5rem 0;
+      border-left: 4px solid #f44;
+      word-break: break-all;
+    }
+    .email { color: #5f7ecf; font-weight: bold; text-decoration: none; }
+    .footer {
+      margin-top: 2rem;
+      font-size: 0.8rem;
+      color: #4a5a7a;
+      border-top: 1px solid #2a3450;
+      padding-top: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">🛡️</div>
+    <h1>Доступ запрещён</h1>
+    <p>Ваш IP-адрес заблокирован за нарушение правил.</p>
+    <div class="msg-box">
+      <strong>Причина:</strong><br>
+      <span id="banMessage">Нарушение правил</span>
+    </div>
+    <p>Апелляция: <a href="mailto:skymonder@yandex.ru" class="email">skymonder@yandex.ru</a></p>
+    <div class="footer">SkyMail — защищённая почта</div>
+  </div>
+  <script>
+    fetch('/ban-info')
+      .then(r => r.json())
+      .then(d => {
+        if (d.message) document.getElementById('banMessage').textContent = d.message;
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>
