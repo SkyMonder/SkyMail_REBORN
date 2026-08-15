@@ -1,0 +1,21 @@
+{
+  "name": "skymail",
+  "version": "1.0.0",
+  "description": "SkyMail почтовый сервис на Node.js",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cookie-session": "^2.0.0",
+    "bcrypt": "^5.1.1",
+    "nodemailer": "^6.9.7",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "author": "SkyMail Team",
+  "license": "MIT"
+}
