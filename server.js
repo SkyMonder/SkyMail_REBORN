@@ -1,28 +1,35 @@
-// server.js — SkyMail с модерацией и админ-панелью (отдельный пароль)
+// server.js — SkyMail с JWT и модерацией
 const express = require('express');
-const session = require('cookie-session');
 const bcrypt = require('bcrypt');
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// -------------------- JWT --------------------
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
+
+function generateJWT(payload) {
+    return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+}
+
+function verifyJWT(token) {
+    try { return jwt.verify(token, JWT_SECRET); } catch (e) { return null; }
+}
+
 // -------------------- Конфигурация администратора --------------------
 const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'SkyMonder';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD; // обязателен в .env
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 if (!ADMIN_PASSWORD) {
     console.warn('⚠️ ADMIN_PASSWORD не задан в .env — админ-панель будет недоступна');
 }
-// Хеш пароля администратора (для сравнения при входе)
 let ADMIN_PASSWORD_HASH = null;
 if (ADMIN_PASSWORD) {
-    // Хешируем при старте (можно сохранить и в .env, но так проще)
-    // Для production лучше хранить готовый хеш в .env, но мы сгенерируем при запуске
-    // Однако при каждом перезапуске хеш будет одинаковым, т.к. пароль не меняется
     ADMIN_PASSWORD_HASH = bcrypt.hashSync(ADMIN_PASSWORD, 10);
 }
 
@@ -228,28 +235,31 @@ app.use(async (req, res, next) => {
     next();
 });
 
-// -------------------- Сессии --------------------
+// -------------------- Middleware для CORS и JSON --------------------
 app.use(express.json());
 app.use(express.static(__dirname));
 
-app.use(session({
-    name: 'session',
-    secret: process.env.SESSION_SECRET || 'skymail-secret-key-change-in-production',
-    maxAge: 24 * 60 * 60 * 1000,
-    httpOnly: true,
-    sameSite: 'lax',
-}));
-
+// -------------------- JWT Middleware --------------------
 function requireAuth(req, res, next) {
-    if (!req.session.user) {
-        return res.status(401).json({ error: 'Не авторизован' });
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+        return res.status(401).json({ error: 'Authorization header required' });
     }
+    const token = authHeader.replace('Bearer ', '');
+    if (!token) {
+        return res.status(401).json({ error: 'Token required' });
+    }
+    const decoded = verifyJWT(token);
+    if (!decoded || !decoded.username) {
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    req.user = decoded;
     next();
 }
 
-// Проверка прав администратора (отдельный пароль)
+// Проверка прав администратора
 function isAdmin(req, res, next) {
-    if (!req.session.user || !req.session.isAdmin) {
+    if (!req.user || !req.user.isAdmin) {
         return res.status(403).json({ error: 'Доступ запрещён. Требуются права администратора.' });
     }
     next();
@@ -257,7 +267,7 @@ function isAdmin(req, res, next) {
 
 // -------------------- API Маршруты --------------------
 
-// Регистрация с модерацией
+// Регистрация с модерацией (возвращает JWT)
 app.post('/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
@@ -279,7 +289,10 @@ app.post('/register', async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     users.push({ username, passwordHash: hash });
     await saveUsers();
-    res.status(201).json({ message: 'Регистрация успешна' });
+
+    // Создаём JWT для нового пользователя
+    const jwtToken = generateJWT({ username, isAdmin: false });
+    res.status(201).json({ username, jwt: jwtToken, isAdmin: false });
 });
 
 // Логин (с поддержкой администратора)
@@ -293,9 +306,8 @@ app.post('/login', async (req, res) => {
     if (username === ADMIN_LOGIN && ADMIN_PASSWORD_HASH) {
         const match = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
         if (match) {
-            req.session.user = username;
-            req.session.isAdmin = true;
-            return res.json({ message: 'Вход выполнен (администратор)', username });
+            const jwtToken = generateJWT({ username, isAdmin: true });
+            return res.json({ message: 'Вход выполнен (администратор)', username, jwt: jwtToken, isAdmin: true });
         } else {
             return res.status(401).json({ error: 'Неверный пароль администратора' });
         }
@@ -310,20 +322,18 @@ app.post('/login', async (req, res) => {
     if (!match) {
         return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
     }
-    req.session.user = username;
-    req.session.isAdmin = false; // явно сбрасываем
-    res.json({ message: 'Вход выполнен', username });
+    const jwtToken = generateJWT({ username, isAdmin: false });
+    res.json({ message: 'Вход выполнен', username, jwt: jwtToken, isAdmin: false });
 });
 
-// Логаут
-app.get('/logout', (req, res) => {
-    req.session = null;
+// Логаут (на клиенте удаляем токен)
+app.post('/logout', (req, res) => {
     res.json({ message: 'Выход выполнен' });
 });
 
 // Получить информацию о текущем пользователе
 app.get('/me', requireAuth, (req, res) => {
-    res.json({ username: req.session.user, isAdmin: !!req.session.isAdmin });
+    res.json({ username: req.user.username, isAdmin: !!req.user.isAdmin });
 });
 
 // Получить письма из папки
@@ -332,7 +342,7 @@ app.get('/emails/:folder', requireAuth, async (req, res) => {
     if (!['inbox', 'sent', 'drafts', 'trash'].includes(folder)) {
         return res.status(400).json({ error: 'Некорректная папка' });
     }
-    const userEmail = getUserEmail(req.session.user);
+    const userEmail = getUserEmail(req.user.username);
     const folderData = getUserFolder(userEmail, folder);
     const sorted = folderData.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
     res.json(sorted);
@@ -355,7 +365,7 @@ app.post('/email/send', requireAuth, async (req, res) => {
         return res.status(403).json({ error: `Текст содержит запрещённый контент: ${bodyMod.reason}` });
     }
 
-    const sender = req.session.user;
+    const sender = req.user.username;
     const senderEmail = getUserEmail(sender);
     const date = new Date().toISOString();
 
@@ -424,7 +434,7 @@ app.post('/email/save-draft', requireAuth, async (req, res) => {
         return res.status(403).json({ error: `Текст содержит запрещённый контент: ${bodyMod.reason}` });
     }
 
-    const senderEmail = getUserEmail(req.session.user);
+    const senderEmail = getUserEmail(req.user.username);
     const drafts = getUserFolder(senderEmail, 'drafts');
 
     if (id) {
@@ -456,7 +466,7 @@ app.post('/email/save-draft', requireAuth, async (req, res) => {
 // Пометить письмо как прочитанное
 app.put('/email/:id/read', requireAuth, async (req, res) => {
     const emailId = req.params.id;
-    const userEmail = getUserEmail(req.session.user);
+    const userEmail = getUserEmail(req.user.username);
     const found = findEmailInUser(userEmail, emailId);
     if (!found) {
         return res.status(404).json({ error: 'Письмо не найдено' });
@@ -476,7 +486,7 @@ app.put('/email/:id/move', requireAuth, async (req, res) => {
         return res.status(400).json({ error: 'Некорректная папка назначения' });
     }
     const emailId = req.params.id;
-    const userEmail = getUserEmail(req.session.user);
+    const userEmail = getUserEmail(req.user.username);
     const found = findEmailInUser(userEmail, emailId);
     if (!found) {
         return res.status(404).json({ error: 'Письмо не найдено' });
@@ -502,7 +512,7 @@ app.put('/email/:id/move', requireAuth, async (req, res) => {
 // Окончательное удаление
 app.delete('/email/:id', requireAuth, async (req, res) => {
     const emailId = req.params.id;
-    const userEmail = getUserEmail(req.session.user);
+    const userEmail = getUserEmail(req.user.username);
     const found = findEmailInUser(userEmail, emailId);
     if (!found) {
         return res.status(404).json({ error: 'Письмо не найдено' });
@@ -518,7 +528,7 @@ app.delete('/email/:id', requireAuth, async (req, res) => {
 app.get('/search', requireAuth, async (req, res) => {
     const q = req.query.q || '';
     if (!q.trim()) return res.json([]);
-    const userEmail = getUserEmail(req.session.user);
+    const userEmail = getUserEmail(req.user.username);
     const userEmails = emails[userEmail];
     if (!userEmails) return res.json([]);
     const results = [];
@@ -535,16 +545,16 @@ app.get('/search', requireAuth, async (req, res) => {
     res.json(results);
 });
 
-// -------------------- Админ-панель (защищена отдельным паролем) --------------------
+// -------------------- Админ-панель (JWT + isAdmin) --------------------
 
 // Список всех пользователей
-app.get('/admin/users', isAdmin, async (req, res) => {
+app.get('/admin/users', requireAuth, isAdmin, async (req, res) => {
     const userList = users.map(u => ({ username: u.username }));
     res.json(userList);
 });
 
 // Статистика
-app.get('/admin/stats', isAdmin, async (req, res) => {
+app.get('/admin/stats', requireAuth, isAdmin, async (req, res) => {
     let banned = [];
     try {
         const data = await fs.readFile(BANNED_FILE, 'utf-8');
@@ -557,7 +567,7 @@ app.get('/admin/stats', isAdmin, async (req, res) => {
 });
 
 // Список нарушений (забаненные IP)
-app.get('/admin/violations', isAdmin, async (req, res) => {
+app.get('/admin/violations', requireAuth, isAdmin, async (req, res) => {
     let banned = [];
     try {
         const data = await fs.readFile(BANNED_FILE, 'utf-8');
@@ -567,7 +577,7 @@ app.get('/admin/violations', isAdmin, async (req, res) => {
 });
 
 // Разбан IP
-app.post('/admin/unban', isAdmin, async (req, res) => {
+app.post('/admin/unban', requireAuth, isAdmin, async (req, res) => {
     const { ip } = req.body;
     if (!ip) {
         return res.status(400).json({ error: 'IP обязателен' });
@@ -595,7 +605,7 @@ app.get('/heal', (req, res) => {
 
 // -------------------- Запуск --------------------
 app.listen(PORT, () => {
-    console.log(`✈️ SkyMail с модерацией и админ-панелью запущен на http://localhost:${PORT}`);
+    console.log(`✈️ SkyMail с JWT и модерацией запущен на http://localhost:${PORT}`);
     console.log(`👑 Администратор: ${ADMIN_LOGIN}`);
     console.log(`🔐 Админ-пароль ${ADMIN_PASSWORD ? 'задан' : 'НЕ ЗАДАН — админка недоступна'}`);
 });
