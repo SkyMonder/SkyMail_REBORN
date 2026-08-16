@@ -1,614 +1,601 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SkyMail — почтовый сервис</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
-    <style>
-        body { background: #f4f7fa; }
-        .email-list-item { cursor: pointer; border-bottom: 1px solid #e9ecef; transition: background 0.15s; }
-        .email-list-item:hover { background: #f1f3f5; }
-        .email-list-item .subject { font-weight: 500; }
-        .email-list-item .from, .email-list-item .to { color: #495057; }
-        .email-list-item .date { color: #6c757d; font-size: 0.9rem; }
-        .email-list-item.unread .subject { font-weight: 700; }
-        .email-list-item.unread .from { font-weight: 600; }
-        .sidebar { background: white; border-right: 1px solid #dee2e6; min-height: 100vh; }
-        .sidebar .nav-link { color: #333; border-radius: 0; }
-        .sidebar .nav-link.active { background: #e9ecef; font-weight: 600; }
-        .sidebar .nav-link i { margin-right: 10px; }
-        .folder-badge { float: right; background: #e9ecef; padding: 0 8px; border-radius: 12px; font-size: 0.8rem; }
-        .toast-container { position: fixed; top: 20px; right: 20px; z-index: 1050; }
-        .email-body { white-space: pre-wrap; word-wrap: break-word; max-height: 400px; overflow-y: auto; }
-    </style>
-</head>
-<body>
-    <div class="toast-container" id="toastContainer"></div>
+// server.js — SkyMail с модерацией и админ-панелью (отдельный пароль)
+const express = require('express');
+const session = require('cookie-session');
+const bcrypt = require('bcrypt');
+const fs = require('fs').promises;
+const path = require('path');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
+require('dotenv').config();
 
-    <!-- Вход/регистрация -->
-    <div id="authContainer" class="container mt-5" style="max-width: 420px;">
-        <div class="card shadow">
-            <div class="card-body">
-                <h3 class="card-title text-center mb-4">✈️ SkyMail</h3>
-                <ul class="nav nav-tabs nav-fill" id="authTabs" role="tablist">
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link active" id="loginTab" data-bs-toggle="tab" data-bs-target="#loginPanel" type="button" role="tab">Вход</button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="registerTab" data-bs-toggle="tab" data-bs-target="#registerPanel" type="button" role="tab">Регистрация</button>
-                    </li>
-                </ul>
-                <div class="tab-content mt-3">
-                    <div class="tab-pane fade show active" id="loginPanel" role="tabpanel">
-                        <form id="loginForm">
-                            <div class="mb-3">
-                                <label for="loginUsername" class="form-label">Имя пользователя</label>
-                                <input type="text" class="form-control" id="loginUsername" required />
-                            </div>
-                            <div class="mb-3">
-                                <label for="loginPassword" class="form-label">Пароль</label>
-                                <input type="password" class="form-control" id="loginPassword" required />
-                            </div>
-                            <button type="submit" class="btn btn-primary w-100">Войти</button>
-                        </form>
-                    </div>
-                    <div class="tab-pane fade" id="registerPanel" role="tabpanel">
-                        <form id="registerForm">
-                            <div class="mb-3">
-                                <label for="registerUsername" class="form-label">Имя пользователя</label>
-                                <input type="text" class="form-control" id="registerUsername" required pattern="[A-Za-z0-9_]+" />
-                                <small class="text-muted">Только латиница, цифры и подчёркивание. Ваш адрес: имя@skymail.ru</small>
-                            </div>
-                            <div class="mb-3">
-                                <label for="registerPassword" class="form-label">Пароль</label>
-                                <input type="password" class="form-control" id="registerPassword" required />
-                            </div>
-                            <button type="submit" class="btn btn-success w-100">Зарегистрироваться</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-    <!-- Основное приложение -->
-    <div id="appContainer" style="display:none;">
-        <div class="container-fluid">
-            <div class="row">
-                <nav class="col-md-3 col-lg-2 d-md-block sidebar p-0">
-                    <div class="position-sticky pt-3">
-                        <div class="px-3 mb-3">
-                            <h5>✈️ SkyMail</h5>
-                            <span class="text-muted" id="userDisplay"></span>
-                        </div>
-                        <ul class="nav flex-column">
-                            <li class="nav-item">
-                                <a href="#" class="nav-link active" data-folder="inbox">
-                                    <i class="bi bi-inbox"></i> Входящие
-                                    <span class="folder-badge" id="inboxCount">0</span>
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a href="#" class="nav-link" data-folder="sent">
-                                    <i class="bi bi-send"></i> Отправленные
-                                    <span class="folder-badge" id="sentCount">0</span>
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a href="#" class="nav-link" data-folder="drafts">
-                                    <i class="bi bi-pencil"></i> Черновики
-                                    <span class="folder-badge" id="draftsCount">0</span>
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a href="#" class="nav-link" data-folder="trash">
-                                    <i class="bi bi-trash"></i> Корзина
-                                    <span class="folder-badge" id="trashCount">0</span>
-                                </a>
-                            </li>
-                            <li class="nav-item mt-4">
-                                <a href="#" class="nav-link" id="composeBtn">
-                                    <i class="bi bi-pencil-square"></i> Написать
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a href="#" class="nav-link" id="logoutBtn">
-                                    <i class="bi bi-box-arrow-right"></i> Выйти
-                                </a>
-                            </li>
-                        </ul>
-                    </div>
-                </nav>
+// -------------------- Конфигурация администратора --------------------
+const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'SkyMonder';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD; // обязателен в .env
+if (!ADMIN_PASSWORD) {
+    console.warn('⚠️ ADMIN_PASSWORD не задан в .env — админ-панель будет недоступна');
+}
+// Хеш пароля администратора (для сравнения при входе)
+let ADMIN_PASSWORD_HASH = null;
+if (ADMIN_PASSWORD) {
+    // Хешируем при старте (можно сохранить и в .env, но так проще)
+    // Для production лучше хранить готовый хеш в .env, но мы сгенерируем при запуске
+    // Однако при каждом перезапуске хеш будет одинаковым, т.к. пароль не меняется
+    ADMIN_PASSWORD_HASH = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+}
 
-                <main class="col-md-9 col-lg-10 px-md-4 py-3">
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <input type="text" id="searchInput" class="form-control" placeholder="Поиск по теме или тексту..." />
-                        </div>
-                        <div class="col-md-2">
-                            <button id="searchBtn" class="btn btn-outline-secondary w-100">Найти</button>
-                        </div>
-                    </div>
+// -------------------- Конфигурация данных --------------------
+const DATA_DIR = path.join(__dirname, 'data');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const EMAILS_FILE = path.join(DATA_DIR, 'emails.json');
+const BANNED_FILE = path.join(DATA_DIR, 'banned_ips.json');
 
-                    <div id="emailListContainer">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <h5 id="folderTitle">Входящие</h5>
-                            <span id="emailCount" class="text-muted">0 писем</span>
-                        </div>
-                        <div id="emailList" class="list-group">
-                            <div class="text-center text-muted py-4">Нет писем</div>
-                        </div>
-                    </div>
-                </main>
-            </div>
-        </div>
-    </div>
+fs.mkdir(DATA_DIR, { recursive: true }).catch(console.error);
 
-    <!-- Модалки -->
-    <div class="modal fade" id="emailModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="emailModalTitle">Письмо</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-2"><strong>От:</strong> <span id="modalFrom"></span></div>
-                    <div class="mb-2"><strong>Кому:</strong> <span id="modalTo"></span></div>
-                    <div class="mb-2"><strong>Тема:</strong> <span id="modalSubject"></span></div>
-                    <div class="mb-2"><strong>Дата:</strong> <span id="modalDate"></span></div>
-                    <hr />
-                    <div id="modalBody" class="email-body"></div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
-                    <button type="button" class="btn btn-danger" id="modalDeleteBtn">Удалить</button>
-                    <button type="button" class="btn btn-warning" id="modalRestoreBtn" style="display:none;">Восстановить</button>
-                    <button type="button" class="btn btn-primary" id="modalEditBtn" style="display:none;">Редактировать</button>
-                </div>
-            </div>
-        </div>
-    </div>
+// -------------------- Загрузка/сохранение данных --------------------
+let users = [];
+let emails = {};
 
-    <div class="modal fade" id="composeModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="composeModalTitle">Новое письмо</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <form id="composeForm">
-                        <input type="hidden" id="composeDraftId" value="" />
-                        <div class="mb-3">
-                            <label for="composeTo" class="form-label">Кому</label>
-                            <input type="email" class="form-control" id="composeTo" required placeholder="example@domain.com" />
-                        </div>
-                        <div class="mb-3">
-                            <label for="composeSubject" class="form-label">Тема</label>
-                            <input type="text" class="form-control" id="composeSubject" required />
-                        </div>
-                        <div class="mb-3">
-                            <label for="composeBody" class="form-label">Текст</label>
-                            <textarea class="form-control" id="composeBody" rows="6" required></textarea>
-                        </div>
-                    </form>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="button" class="btn btn-secondary" id="saveDraftBtn">Сохранить в черновики</button>
-                    <button type="button" class="btn btn-primary" id="sendEmailBtn">Отправить</button>
-                </div>
-            </div>
-        </div>
-    </div>
+async function loadData() {
+    try {
+        const usersData = await fs.readFile(USERS_FILE, 'utf-8');
+        users = JSON.parse(usersData);
+    } catch (err) {
+        users = [];
+    }
+    try {
+        const emailsData = await fs.readFile(EMAILS_FILE, 'utf-8');
+        emails = JSON.parse(emailsData);
+    } catch (err) {
+        emails = {};
+    }
+}
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        (function() {
-            'use strict';
+async function saveUsers() {
+    await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
+}
 
-            // ====== ИСПОЛЬЗУЕМ JWT из SkyID ======
-            const API_PREFIX = '/mail';
-            let token = localStorage.getItem('skyid_token') || null;
-            let currentUsername = null;
+async function saveEmails() {
+    await fs.writeFile(EMAILS_FILE, JSON.stringify(emails, null, 2));
+}
 
-            // Элементы DOM
-            const authContainer = document.getElementById('authContainer');
-            const appContainer = document.getElementById('appContainer');
-            const userDisplay = document.getElementById('userDisplay');
-            const emailList = document.getElementById('emailList');
-            const folderTitle = document.getElementById('folderTitle');
-            const emailCount = document.getElementById('emailCount');
-            const searchInput = document.getElementById('searchInput');
-            const searchBtn = document.getElementById('searchBtn');
+loadData().then(() => console.log('Data loaded.'));
 
-            const emailModal = new bootstrap.Modal(document.getElementById('emailModal'));
-            const composeModal = new bootstrap.Modal(document.getElementById('composeModal'));
+// -------------------- Вспомогательные функции --------------------
+function generateId() {
+    return crypto.randomUUID();
+}
 
-            let currentFolder = 'inbox';
-            let currentEmails = [];
-            let selectedEmailId = null;
+function getUserByUsername(username) {
+    return users.find(u => u.username === username);
+}
 
-            const modalFrom = document.getElementById('modalFrom');
-            const modalTo = document.getElementById('modalTo');
-            const modalSubject = document.getElementById('modalSubject');
-            const modalDate = document.getElementById('modalDate');
-            const modalBody = document.getElementById('modalBody');
-            const modalDeleteBtn = document.getElementById('modalDeleteBtn');
-            const modalRestoreBtn = document.getElementById('modalRestoreBtn');
-            const modalEditBtn = document.getElementById('modalEditBtn');
+function getUserEmail(username) {
+    return `${username}@skymail.ru`;
+}
 
-            const composeForm = document.getElementById('composeForm');
-            const composeDraftId = document.getElementById('composeDraftId');
-            const composeTo = document.getElementById('composeTo');
-            const composeSubject = document.getElementById('composeSubject');
-            const composeBody = document.getElementById('composeBody');
-            const sendEmailBtn = document.getElementById('sendEmailBtn');
-            const saveDraftBtn = document.getElementById('saveDraftBtn');
+function getUserFolder(userEmail, folder) {
+    if (!emails[userEmail]) {
+        emails[userEmail] = { inbox: [], sent: [], drafts: [], trash: [] };
+    }
+    if (!emails[userEmail][folder]) {
+        emails[userEmail][folder] = [];
+    }
+    return emails[userEmail][folder];
+}
 
-            // ====== API-запросы с JWT ======
-            async function apiRequest(url, options = {}) {
-                const fullUrl = url.startsWith('/mail') ? url : API_PREFIX + url;
-                const headers = {
-                    'Content-Type': 'application/json',
-                };
-                if (token) {
-                    headers['Authorization'] = `Bearer ${token}`;
-                }
-                const merged = {
-                    ...options,
-                    headers: { ...headers, ...(options.headers || {}) },
-                };
-                if (options.body && typeof options.body === 'object') {
-                    merged.body = JSON.stringify(options.body);
-                }
-                const response = await fetch(fullUrl, merged);
-                if (!response.ok) {
-                    const errData = await response.json().catch(() => ({}));
-                    if (response.status === 401) {
-                        // Токен невалиден — пробуем обновить (но у нас нет refresh, поэтому просто разлогиниваем)
-                        token = null;
-                        localStorage.removeItem('skyid_token');
-                        authContainer.style.display = 'block';
-                        appContainer.style.display = 'none';
-                        throw new Error('Unauthorized');
-                    }
-                    throw new Error(errData.error || `Ошибка ${response.status}`);
-                }
-                return response.json();
+function saveEmailToFolder(userEmail, email, folder) {
+    const folderData = getUserFolder(userEmail, folder);
+    folderData.push(email);
+}
+
+function findEmailInUser(userEmail, emailId) {
+    const userEmails = emails[userEmail];
+    if (!userEmails) return null;
+    for (const folder of ['inbox', 'sent', 'drafts', 'trash']) {
+        const list = userEmails[folder] || [];
+        const idx = list.findIndex(e => e.id === emailId);
+        if (idx !== -1) {
+            return { folder, index: idx, item: list[idx] };
+        }
+    }
+    return null;
+}
+
+async function sendExternalEmail(from, to, subject, body) {
+    const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: parseInt(process.env.SMTP_PORT) || 587,
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+        },
+    });
+    try {
+        const info = await transporter.sendMail({ from, to, subject, text: body });
+        console.log(`Email sent to ${to}: ${info.messageId}`);
+        return true;
+    } catch (err) {
+        console.error(`Failed to send email to ${to}:`, err.message);
+        return false;
+    }
+}
+
+// -------------------- Модерация --------------------
+const BANNED_WORDS = [
+    'мат', 'дурак', 'идиот', 'дебил', 'урод', 'козёл', 'сволочь', 'подонок',
+    'уёбок', 'пизда', 'хуй', 'блядь', 'сука', 'нахуй', 'похуй', 'заебал',
+    'террорист', 'терракт', 'взорвать', 'взрыв', 'бомба', 'оружие', 'стрельба',
+    'убить', 'насилие', 'экстремизм', 'диверсия', 'исламское государство', 'игил',
+    'захват', 'заложник', 'смертник', 'шахид', 'джихад', 'наркотик', 'наркота',
+    'расчленить', 'отрезать', 'пытать', 'насиловать', 'педофил', 'педофилия',
+    'украсть', 'ограбить', 'воровать', 'мошенник', 'скам', 'фишинг', 'взломать',
+    'расстрел', 'застрелить', 'отрубить', 'отрезать', 'зарезать', 'задушить'
+];
+
+function containsBannedWords(text) {
+    if (!text) return false;
+    const lower = text.toLowerCase();
+    return BANNED_WORDS.some(word => lower.includes(word));
+}
+
+async function moderateWithAI(text) {
+    const HF_TOKEN = process.env.HF_TOKEN;
+    if (!HF_TOKEN) return null;
+    try {
+        const response = await fetch(
+            'https://api-inference.huggingface.co/models/unitary/toxic-bert',
+            {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${HF_TOKEN}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inputs: text }),
+                signal: AbortSignal.timeout(5000)
             }
+        );
+        if (!response.ok) return null;
+        return await response.json();
+    } catch (e) {
+        return null;
+    }
+}
 
-            // Вспомогательные функции
-            function showToast(message, type = 'success') {
-                const container = document.getElementById('toastContainer');
-                const toast = document.createElement('div');
-                toast.className = `toast align-items-center text-white bg-${type} border-0`;
-                toast.role = 'alert';
-                toast.innerHTML = `
-                    <div class="d-flex">
-                        <div class="toast-body">${message}</div>
-                        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-                    </div>
-                `;
-                container.appendChild(toast);
-                const bsToast = new bootstrap.Toast(toast, { delay: 3000 });
-                bsToast.show();
-                toast.addEventListener('hidden.bs.toast', () => toast.remove());
+async function checkModerationAndBan(text, ip) {
+    if (!text) return { banned: false };
+    if (containsBannedWords(text)) {
+        await banIP(ip, text);
+        return { banned: true, reason: 'Запрещённые слова' };
+    }
+    const aiResult = await moderateWithAI(text);
+    if (aiResult && Array.isArray(aiResult) && aiResult.length > 0) {
+        const toxic = aiResult.find(item => item.label === 'toxic');
+        if (toxic && toxic.score > 0.7) {
+            await banIP(ip, text);
+            return { banned: true, reason: 'Токсичный контент (ИИ)' };
+        }
+    }
+    return { banned: false };
+}
+
+async function banIP(ip, reason) {
+    const cleanIp = ip.split(',')[0].split(':')[0];
+    let banned = [];
+    try {
+        const data = await fs.readFile(BANNED_FILE, 'utf-8');
+        banned = JSON.parse(data);
+    } catch (e) { banned = []; }
+    if (!banned.find(b => b.ip === cleanIp)) {
+        banned.push({ ip: cleanIp, bannedAt: Date.now(), reason: reason || 'Нарушение правил' });
+        await fs.writeFile(BANNED_FILE, JSON.stringify(banned, null, 2));
+        console.log(`🚫 IP ${cleanIp} забанен за: "${reason}"`);
+    }
+}
+
+async function isIPBanned(ip) {
+    const cleanIp = ip.split(',')[0].split(':')[0];
+    try {
+        const data = await fs.readFile(BANNED_FILE, 'utf-8');
+        const banned = JSON.parse(data);
+        return banned.find(b => b.ip === cleanIp) || null;
+    } catch (e) { return null; }
+}
+
+function getClientIP(req) {
+    const forwarded = req.headers['x-forwarded-for'];
+    const ip = forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress;
+    return ip.split(':')[0];
+}
+
+// Middleware проверки бана
+app.use(async (req, res, next) => {
+    if (req.path === '/ban.html' || req.path === '/favicon.ico') return next();
+    const ip = getClientIP(req);
+    const banned = await isIPBanned(ip);
+    if (banned) {
+        const isApi = req.path.startsWith('/api/') ||
+                      req.path === '/register' || req.path === '/login' ||
+                      req.path === '/verify' || req.path === '/ban-info' ||
+                      req.path.startsWith('/email/') || req.path === '/me' ||
+                      req.path === '/logout' || req.path === '/search' ||
+                      req.path.startsWith('/admin/');
+        if (isApi) {
+            return res.status(403).json({ error: 'Banned', message: banned.reason || 'Ваш IP заблокирован' });
+        }
+        return res.redirect('/ban.html');
+    }
+    next();
+});
+
+// -------------------- Сессии --------------------
+app.use(express.json());
+app.use(express.static(__dirname));
+
+app.use(session({
+    name: 'session',
+    secret: process.env.SESSION_SECRET || 'skymail-secret-key-change-in-production',
+    maxAge: 24 * 60 * 60 * 1000,
+    httpOnly: true,
+    sameSite: 'lax',
+}));
+
+function requireAuth(req, res, next) {
+    if (!req.session.user) {
+        return res.status(401).json({ error: 'Не авторизован' });
+    }
+    next();
+}
+
+// Проверка прав администратора (отдельный пароль)
+function isAdmin(req, res, next) {
+    if (!req.session.user || !req.session.isAdmin) {
+        return res.status(403).json({ error: 'Доступ запрещён. Требуются права администратора.' });
+    }
+    next();
+}
+
+// -------------------- API Маршруты --------------------
+
+// Регистрация с модерацией
+app.post('/register', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Имя и пароль обязательны' });
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+        return res.status(400).json({ error: 'Имя может содержать только латиницу, цифры и подчёркивание' });
+    }
+    if (getUserByUsername(username)) {
+        return res.status(400).json({ error: 'Пользователь с таким именем уже существует' });
+    }
+
+    const ip = getClientIP(req);
+    const modResult = await checkModerationAndBan(username, ip);
+    if (modResult.banned) {
+        return res.status(403).json({ error: `Доступ запрещён: ${modResult.reason}` });
+    }
+
+    const hash = await bcrypt.hash(password, 10);
+    users.push({ username, passwordHash: hash });
+    await saveUsers();
+    res.status(201).json({ message: 'Регистрация успешна' });
+});
+
+// Логин (с поддержкой администратора)
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Имя и пароль обязательны' });
+    }
+
+    // Проверка: администратор?
+    if (username === ADMIN_LOGIN && ADMIN_PASSWORD_HASH) {
+        const match = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+        if (match) {
+            req.session.user = username;
+            req.session.isAdmin = true;
+            return res.json({ message: 'Вход выполнен (администратор)', username });
+        } else {
+            return res.status(401).json({ error: 'Неверный пароль администратора' });
+        }
+    }
+
+    // Обычный пользователь
+    const user = getUserByUsername(username);
+    if (!user) {
+        return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
+    }
+    const match = await bcrypt.compare(password, user.passwordHash);
+    if (!match) {
+        return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
+    }
+    req.session.user = username;
+    req.session.isAdmin = false; // явно сбрасываем
+    res.json({ message: 'Вход выполнен', username });
+});
+
+// Логаут
+app.get('/logout', (req, res) => {
+    req.session = null;
+    res.json({ message: 'Выход выполнен' });
+});
+
+// Получить информацию о текущем пользователе
+app.get('/me', requireAuth, (req, res) => {
+    res.json({ username: req.session.user, isAdmin: !!req.session.isAdmin });
+});
+
+// Получить письма из папки
+app.get('/emails/:folder', requireAuth, async (req, res) => {
+    const folder = req.params.folder;
+    if (!['inbox', 'sent', 'drafts', 'trash'].includes(folder)) {
+        return res.status(400).json({ error: 'Некорректная папка' });
+    }
+    const userEmail = getUserEmail(req.session.user);
+    const folderData = getUserFolder(userEmail, folder);
+    const sorted = folderData.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+    res.json(sorted);
+});
+
+// Отправить письмо с модерацией
+app.post('/email/send', requireAuth, async (req, res) => {
+    const { to, subject, body } = req.body;
+    if (!to || !subject || !body) {
+        return res.status(400).json({ error: 'Заполните все поля' });
+    }
+
+    const ip = getClientIP(req);
+    const subjectMod = await checkModerationAndBan(subject, ip);
+    if (subjectMod.banned) {
+        return res.status(403).json({ error: `Тема содержит запрещённый контент: ${subjectMod.reason}` });
+    }
+    const bodyMod = await checkModerationAndBan(body, ip);
+    if (bodyMod.banned) {
+        return res.status(403).json({ error: `Текст содержит запрещённый контент: ${bodyMod.reason}` });
+    }
+
+    const sender = req.session.user;
+    const senderEmail = getUserEmail(sender);
+    const date = new Date().toISOString();
+
+    const recipientUsername = to.split('@')[0];
+    const recipientDomain = to.split('@')[1];
+    const isLocal = (recipientDomain === 'skymail.ru' && getUserByUsername(recipientUsername));
+
+    const sentEmail = {
+        id: generateId(),
+        from: senderEmail,
+        to,
+        subject,
+        body,
+        date,
+        read: false,
+        folder: 'sent',
+    };
+    saveEmailToFolder(senderEmail, sentEmail, 'sent');
+
+    if (isLocal) {
+        const recipientEmail = getUserEmail(recipientUsername);
+        const inboxEmail = {
+            id: generateId(),
+            from: senderEmail,
+            to,
+            subject,
+            body,
+            date,
+            read: false,
+            folder: 'inbox',
+        };
+        saveEmailToFolder(recipientEmail, inboxEmail, 'inbox');
+        await saveEmails();
+        return res.json({ message: 'Письмо отправлено локальному пользователю' });
+    }
+
+    let smtpSent = false;
+    if (process.env.SMTP_HOST && process.env.SMTP_USER) {
+        smtpSent = await sendExternalEmail(senderEmail, to, subject, body);
+    } else {
+        console.log(`SMTP не настроен, письмо для ${to} не отправлено реально`);
+    }
+
+    await saveEmails();
+    res.json({
+        message: smtpSent
+            ? 'Письмо отправлено внешнему адресату'
+            : 'Письмо сохранено в отправленных, но не доставлено (SMTP не настроен)'
+    });
+});
+
+// Сохранить черновик с модерацией
+app.post('/email/save-draft', requireAuth, async (req, res) => {
+    const { id, to, subject, body } = req.body;
+    if (!to || !subject || !body) {
+        return res.status(400).json({ error: 'Заполните все поля' });
+    }
+
+    const ip = getClientIP(req);
+    const subjectMod = await checkModerationAndBan(subject, ip);
+    if (subjectMod.banned) {
+        return res.status(403).json({ error: `Тема содержит запрещённый контент: ${subjectMod.reason}` });
+    }
+    const bodyMod = await checkModerationAndBan(body, ip);
+    if (bodyMod.banned) {
+        return res.status(403).json({ error: `Текст содержит запрещённый контент: ${bodyMod.reason}` });
+    }
+
+    const senderEmail = getUserEmail(req.session.user);
+    const drafts = getUserFolder(senderEmail, 'drafts');
+
+    if (id) {
+        const idx = drafts.findIndex(e => e.id === id);
+        if (idx === -1) {
+            return res.status(404).json({ error: 'Черновик не найден' });
+        }
+        drafts[idx].to = to;
+        drafts[idx].subject = subject;
+        drafts[idx].body = body;
+        drafts[idx].date = new Date().toISOString();
+    } else {
+        const draft = {
+            id: generateId(),
+            from: senderEmail,
+            to,
+            subject,
+            body,
+            date: new Date().toISOString(),
+            read: false,
+            folder: 'drafts',
+        };
+        drafts.push(draft);
+    }
+    await saveEmails();
+    res.json({ message: 'Черновик сохранён' });
+});
+
+// Пометить письмо как прочитанное
+app.put('/email/:id/read', requireAuth, async (req, res) => {
+    const emailId = req.params.id;
+    const userEmail = getUserEmail(req.session.user);
+    const found = findEmailInUser(userEmail, emailId);
+    if (!found) {
+        return res.status(404).json({ error: 'Письмо не найдено' });
+    }
+    if (found.folder !== 'inbox') {
+        return res.status(400).json({ error: 'Пометка прочтения доступна только для входящих' });
+    }
+    found.item.read = true;
+    await saveEmails();
+    res.json({ message: 'Письмо отмечено как прочитанное' });
+});
+
+// Переместить письмо
+app.put('/email/:id/move', requireAuth, async (req, res) => {
+    const { targetFolder } = req.body;
+    if (!['trash', 'inbox', 'sent', 'drafts'].includes(targetFolder)) {
+        return res.status(400).json({ error: 'Некорректная папка назначения' });
+    }
+    const emailId = req.params.id;
+    const userEmail = getUserEmail(req.session.user);
+    const found = findEmailInUser(userEmail, emailId);
+    if (!found) {
+        return res.status(404).json({ error: 'Письмо не найдено' });
+    }
+    const { folder: currentFolder, index, item } = found;
+    if (currentFolder === targetFolder) {
+        return res.json({ message: 'Письмо уже в этой папке' });
+    }
+    const currentList = getUserFolder(userEmail, currentFolder);
+    currentList.splice(index, 1);
+    if (targetFolder === 'trash') {
+        item.originalFolder = currentFolder;
+    } else {
+        delete item.originalFolder;
+    }
+    item.folder = targetFolder;
+    const targetList = getUserFolder(userEmail, targetFolder);
+    targetList.push(item);
+    await saveEmails();
+    res.json({ message: `Письмо перемещено в ${targetFolder}` });
+});
+
+// Окончательное удаление
+app.delete('/email/:id', requireAuth, async (req, res) => {
+    const emailId = req.params.id;
+    const userEmail = getUserEmail(req.session.user);
+    const found = findEmailInUser(userEmail, emailId);
+    if (!found) {
+        return res.status(404).json({ error: 'Письмо не найдено' });
+    }
+    const { folder, index } = found;
+    const list = getUserFolder(userEmail, folder);
+    list.splice(index, 1);
+    await saveEmails();
+    res.json({ message: 'Письмо окончательно удалено' });
+});
+
+// Поиск
+app.get('/search', requireAuth, async (req, res) => {
+    const q = req.query.q || '';
+    if (!q.trim()) return res.json([]);
+    const userEmail = getUserEmail(req.session.user);
+    const userEmails = emails[userEmail];
+    if (!userEmails) return res.json([]);
+    const results = [];
+    for (const folder of ['inbox', 'sent', 'drafts', 'trash']) {
+        const list = userEmails[folder] || [];
+        for (const email of list) {
+            if (email.subject.toLowerCase().includes(q.toLowerCase()) ||
+                email.body.toLowerCase().includes(q.toLowerCase())) {
+                results.push({ ...email, folder });
             }
+        }
+    }
+    results.sort((a, b) => new Date(b.date) - new Date(a.date));
+    res.json(results);
+});
 
-            function escapeHtml(text) {
-                if (!text) return '';
-                const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-                return text.replace(/[&<>"']/g, function(m) { return map[m]; });
-            }
+// -------------------- Админ-панель (защищена отдельным паролем) --------------------
 
-            function formatDate(dateStr) {
-                const date = new Date(dateStr);
-                return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-            }
+// Список всех пользователей
+app.get('/admin/users', isAdmin, async (req, res) => {
+    const userList = users.map(u => ({ username: u.username }));
+    res.json(userList);
+});
 
-            function updateCounts() {
-                const folders = ['inbox', 'sent', 'drafts', 'trash'];
-                folders.forEach(folder => {
-                    apiRequest(`/emails/${folder}`)
-                        .then(data => {
-                            const count = data.length;
-                            document.getElementById(`${folder}Count`).textContent = count;
-                        })
-                        .catch(() => {});
-                });
-            }
+// Статистика
+app.get('/admin/stats', isAdmin, async (req, res) => {
+    let banned = [];
+    try {
+        const data = await fs.readFile(BANNED_FILE, 'utf-8');
+        banned = JSON.parse(data);
+    } catch (e) { banned = []; }
+    res.json({
+        users: users.length,
+        banned: banned.length,
+    });
+});
 
-            function loadEmails(folder = currentFolder, searchQuery = '') {
-                currentFolder = folder;
-                let url = `/emails/${folder}`;
-                if (searchQuery) {
-                    url = `/search?q=${encodeURIComponent(searchQuery)}`;
-                }
-                apiRequest(url)
-                    .then(data => {
-                        currentEmails = data;
-                        renderEmailList(data, folder);
-                        updateCounts();
-                        const folderNames = {
-                            inbox: 'Входящие',
-                            sent: 'Отправленные',
-                            drafts: 'Черновики',
-                            trash: 'Корзина'
-                        };
-                        folderTitle.textContent = searchQuery ? `Результаты поиска: "${searchQuery}"` : folderNames[folder] || folder;
-                        emailCount.textContent = `${data.length} писем`;
-                    })
-                    .catch(err => {
-                        if (err.message === 'Unauthorized') {
-                            // Токен невалиден, показываем вход
-                            authContainer.style.display = 'block';
-                            appContainer.style.display = 'none';
-                        } else {
-                            showToast(err.message, 'danger');
-                        }
-                    });
-            }
+// Список нарушений (забаненные IP)
+app.get('/admin/violations', isAdmin, async (req, res) => {
+    let banned = [];
+    try {
+        const data = await fs.readFile(BANNED_FILE, 'utf-8');
+        banned = JSON.parse(data);
+    } catch (e) { banned = []; }
+    res.json(banned);
+});
 
-            function renderEmailList(emails, folder) {
-                if (!emails.length) {
-                    emailList.innerHTML = `<div class="text-center text-muted py-4">Нет писем</div>`;
-                    return;
-                }
-                let html = '';
-                emails.forEach(email => {
-                    const isUnread = folder === 'inbox' && !email.read;
-                    const fromTo = folder === 'inbox' ? email.from : folder === 'sent' ? email.to : email.from;
-                    html += `
-                        <div class="list-group-item email-list-item ${isUnread ? 'unread' : ''}" data-id="${email.id}">
-                            <div class="d-flex w-100 justify-content-between align-items-center">
-                                <div class="d-flex flex-column flex-grow-1 me-2">
-                                    <span class="from"><strong>${folder === 'inbox' ? 'От' : folder === 'sent' ? 'Кому' : 'От'}:</strong> ${escapeHtml(fromTo)}</span>
-                                    <span class="subject">${escapeHtml(email.subject)}</span>
-                                </div>
-                                <div class="text-end">
-                                    <span class="date">${formatDate(email.date)}</span>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                });
-                emailList.innerHTML = html;
-                document.querySelectorAll('.email-list-item').forEach(item => {
-                    item.addEventListener('click', function() {
-                        const id = this.dataset.id;
-                        openEmail(id);
-                    });
-                });
-            }
+// Разбан IP
+app.post('/admin/unban', isAdmin, async (req, res) => {
+    const { ip } = req.body;
+    if (!ip) {
+        return res.status(400).json({ error: 'IP обязателен' });
+    }
+    let banned = [];
+    try {
+        const data = await fs.readFile(BANNED_FILE, 'utf-8');
+        banned = JSON.parse(data);
+    } catch (e) { banned = []; }
+    const filtered = banned.filter(b => b.ip !== ip);
+    if (filtered.length === banned.length) {
+        return res.status(404).json({ error: 'IP не найден в списке банов' });
+    }
+    await fs.writeFile(BANNED_FILE, JSON.stringify(filtered, null, 2));
+    res.json({ ok: true, message: `IP ${ip} разбанен` });
+});
 
-            function openEmail(id) {
-                const email = currentEmails.find(e => e.id === id);
-                if (!email) {
-                    showToast('Письмо не найдено', 'danger');
-                    return;
-                }
-                selectedEmailId = id;
-                modalFrom.textContent = email.from || '';
-                modalTo.textContent = email.to || '';
-                modalSubject.textContent = email.subject || '';
-                modalDate.textContent = formatDate(email.date);
-                modalBody.textContent = email.body || '';
+// -------------------- Health check --------------------
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+app.get('/heal', (req, res) => {
+    res.redirect('/health');
+});
 
-                const folder = email.folder || currentFolder;
-                if (folder === 'trash') {
-                    modalDeleteBtn.textContent = 'Удалить навсегда';
-                    modalRestoreBtn.style.display = 'inline-block';
-                } else {
-                    modalDeleteBtn.textContent = 'Удалить (в корзину)';
-                    modalRestoreBtn.style.display = 'none';
-                }
-                if (folder === 'drafts') {
-                    modalEditBtn.style.display = 'inline-block';
-                } else {
-                    modalEditBtn.style.display = 'none';
-                }
-
-                if (folder === 'inbox' && !email.read) {
-                    apiRequest(`/email/${id}/read`, { method: 'PUT' })
-                        .then(() => {
-                            email.read = true;
-                            loadEmails(currentFolder);
-                            showToast('Письмо отмечено как прочитанное');
-                        })
-                        .catch(err => showToast(err.message, 'danger'));
-                }
-                emailModal.show();
-            }
-
-            // -------------------- Обработчики --------------------
-
-            // Проверяем, есть ли уже токен
-            if (token) {
-                // Проверяем валидность токена
-                apiRequest('/me')
-                    .then(data => {
-                        currentUsername = data.username;
-                        authContainer.style.display = 'none';
-                        appContainer.style.display = 'block';
-                        userDisplay.textContent = currentUsername;
-                        loadEmails('inbox');
-                    })
-                    .catch(() => {
-                        // Токен невалиден, показываем вход
-                        token = null;
-                        localStorage.removeItem('skyid_token');
-                        authContainer.style.display = 'block';
-                        appContainer.style.display = 'none';
-                    });
-            } else {
-                authContainer.style.display = 'block';
-                appContainer.style.display = 'none';
-            }
-
-            // Вход через форму (для тех, у кого нет SkyID)
-            document.getElementById('loginForm').addEventListener('submit', async function(e) {
-                e.preventDefault();
-                const username = document.getElementById('loginUsername').value.trim();
-                const password = document.getElementById('loginPassword').value;
-                try {
-                    const data = await apiRequest('/login', { method: 'POST', body: { username, password } });
-                    token = data.jwt;
-                    localStorage.setItem('skyid_token', token);
-                    currentUsername = username;
-                    showToast(`Добро пожаловать, ${username}!`);
-                    authContainer.style.display = 'none';
-                    appContainer.style.display = 'block';
-                    userDisplay.textContent = username;
-                    loadEmails('inbox');
-                } catch (err) {
-                    showToast(err.message, 'danger');
-                }
-            });
-
-            // Регистрация
-            document.getElementById('registerForm').addEventListener('submit', async function(e) {
-                e.preventDefault();
-                const username = document.getElementById('registerUsername').value.trim();
-                const password = document.getElementById('registerPassword').value;
-                try {
-                    await apiRequest('/register', { method: 'POST', body: { username, password } });
-                    showToast('Регистрация успешна! Теперь войдите.');
-                    document.getElementById('loginTab').click();
-                    document.getElementById('loginUsername').value = username;
-                    document.getElementById('loginPassword').value = '';
-                } catch (err) {
-                    showToast(err.message, 'danger');
-                }
-            });
-
-            // Навигация
-            document.querySelectorAll('.sidebar .nav-link[data-folder]').forEach(link => {
-                link.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    document.querySelectorAll('.sidebar .nav-link').forEach(l => l.classList.remove('active'));
-                    this.classList.add('active');
-                    const folder = this.dataset.folder;
-                    loadEmails(folder);
-                    searchInput.value = '';
-                });
-            });
-
-            document.getElementById('composeBtn').addEventListener('click', function(e) {
-                e.preventDefault();
-                composeForm.reset();
-                composeDraftId.value = '';
-                document.getElementById('composeModalTitle').textContent = 'Новое письмо';
-                composeModal.show();
-            });
-
-            sendEmailBtn.addEventListener('click', async function() {
-                const to = composeTo.value.trim();
-                const subject = composeSubject.value.trim();
-                const body = composeBody.value.trim();
-                if (!to || !subject || !body) {
-                    showToast('Заполните все поля', 'warning');
-                    return;
-                }
-                try {
-                    await apiRequest('/email/send', { method: 'POST', body: { to, subject, body } });
-                    showToast('Письмо отправлено!');
-                    composeModal.hide();
-                    loadEmails(currentFolder);
-                } catch (err) {
-                    showToast(err.message, 'danger');
-                }
-            });
-
-            saveDraftBtn.addEventListener('click', async function() {
-                const to = composeTo.value.trim();
-                const subject = composeSubject.value.trim();
-                const body = composeBody.value.trim();
-                if (!to || !subject || !body) {
-                    showToast('Заполните все поля', 'warning');
-                    return;
-                }
-                const draftId = composeDraftId.value || undefined;
-                try {
-                    await apiRequest('/email/save-draft', { method: 'POST', body: { id: draftId, to, subject, body } });
-                    showToast('Черновик сохранён');
-                    composeModal.hide();
-                    loadEmails(currentFolder);
-                } catch (err) {
-                    showToast(err.message, 'danger');
-                }
-            });
-
-            modalDeleteBtn.addEventListener('click', async function() {
-                if (!selectedEmailId) return;
-                const isTrash = modalDeleteBtn.textContent.includes('навсегда');
-                try {
-                    if (isTrash) {
-                        await apiRequest(`/email/${selectedEmailId}`, { method: 'DELETE' });
-                        showToast('Письмо окончательно удалено');
-                    } else {
-                        await apiRequest(`/email/${selectedEmailId}/move`, { method: 'PUT', body: { targetFolder: 'trash' } });
-                        showToast('Письмо перемещено в корзину');
-                    }
-                    emailModal.hide();
-                    loadEmails(currentFolder);
-                } catch (err) {
-                    showToast(err.message, 'danger');
-                }
-            });
-
-            modalRestoreBtn.addEventListener('click', async function() {
-                if (!selectedEmailId) return;
-                try {
-                    await apiRequest(`/email/${selectedEmailId}/move`, { method: 'PUT', body: { targetFolder: 'inbox' } });
-                    showToast('Письмо восстановлено из корзины');
-                    emailModal.hide();
-                    loadEmails(currentFolder);
-                } catch (err) {
-                    showToast(err.message, 'danger');
-                }
-            });
-
-            modalEditBtn.addEventListener('click', function() {
-                if (!selectedEmailId) return;
-                const email = currentEmails.find(e => e.id === selectedEmailId);
-                if (!email) return;
-                composeDraftId.value = email.id;
-                composeTo.value = email.to || '';
-                composeSubject.value = email.subject || '';
-                composeBody.value = email.body || '';
-                document.getElementById('composeModalTitle').textContent = 'Редактировать черновик';
-                emailModal.hide();
-                composeModal.show();
-            });
-
-            document.getElementById('logoutBtn').addEventListener('click', function(e) {
-                e.preventDefault();
-                token = null;
-                localStorage.removeItem('skyid_token');
-                authContainer.style.display = 'block';
-                appContainer.style.display = 'none';
-                showToast('Вы вышли');
-            });
-
-            searchBtn.addEventListener('click', function() {
-                const query = searchInput.value.trim();
-                if (!query) {
-                    loadEmails(currentFolder);
-                    return;
-                }
-                loadEmails(currentFolder, query);
-            });
-
-            searchInput.addEventListener('keyup', function(e) {
-                if (e.key === 'Enter') {
-                    searchBtn.click();
-                }
-            });
-        })();
-    </script>
-</body>
-</html>
+// -------------------- Запуск --------------------
+app.listen(PORT, () => {
+    console.log(`✈️ SkyMail с модерацией и админ-панелью запущен на http://localhost:${PORT}`);
+    console.log(`👑 Администратор: ${ADMIN_LOGIN}`);
+    console.log(`🔐 Админ-пароль ${ADMIN_PASSWORD ? 'задан' : 'НЕ ЗАДАН — админка недоступна'}`);
+});
